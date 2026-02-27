@@ -1106,6 +1106,10 @@
     const inputEl = document.getElementById('demo-input')
     const sendBtn = document.getElementById('demo-send')
 
+    // Cuánto tarda antes de mostrar el aviso de cold start (ms)
+    const COLD_START_THRESHOLD = 4000
+    let serverReady = false
+
     function addMsg(text, type) {
       const div = document.createElement('div')
       div.className = `demo-msg ${type}`
@@ -1113,6 +1117,21 @@
       messagesEl.appendChild(div)
       messagesEl.scrollTop = messagesEl.scrollHeight
       return div
+    }
+
+    // Actualiza el texto de un mensaje existente
+    function updateMsg(el, text) {
+      el.textContent = text
+      messagesEl.scrollTop = messagesEl.scrollHeight
+    }
+
+    async function callBackend(mensaje) {
+      const res = await fetch(`${BACKEND_URL}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId, mensaje })
+      })
+      return res.json()
     }
 
     async function sendMessage() {
@@ -1125,18 +1144,26 @@
 
       const typing = addMsg('Escribiendo...', 'typing')
 
+      // Si el servidor todavía no respondió el saludo inicial,
+      // mostramos aviso de cold start después de 4 segundos
+      let coldStartWarning = null
+      const coldStartTimer = setTimeout(() => {
+        if (!serverReady) {
+          coldStartWarning = typing
+          updateMsg(typing, '⏳ Iniciando agente... puede tardar unos segundos la primera vez.')
+        }
+      }, COLD_START_THRESHOLD)
+
       try {
-        const res = await fetch(`${BACKEND_URL}/chat`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId, mensaje: text })
-        })
-        const data = await res.json()
+        const data = await callBackend(text)
+        clearTimeout(coldStartTimer)
+        serverReady = true
         typing.remove()
         addMsg(data.respuesta, 'bot')
       } catch {
+        clearTimeout(coldStartTimer)
         typing.remove()
-        addMsg('Hubo un error al conectar. Intentá de nuevo en un momento.', 'bot')
+        addMsg('No se pudo conectar. Intentá de nuevo en un momento.', 'bot')
       } finally {
         inputEl.disabled = false
         sendBtn.disabled = false
@@ -1147,20 +1174,32 @@
     sendBtn.addEventListener('click', sendMessage)
     inputEl.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage() })
 
-    // Saludo inicial
+    // ── SALUDO INICIAL con manejo de cold start ──
     window.addEventListener('load', async () => {
       await new Promise(r => setTimeout(r, 600))
+
       const typing = addMsg('Escribiendo...', 'typing')
+
+      // Después de 4s sin respuesta, avisamos que está iniciando
+      const coldTimer = setTimeout(() => {
+        updateMsg(typing, '⏳ Iniciando agente... el servidor se despierta en unos segundos.')
+      }, COLD_START_THRESHOLD)
+
+      // Después de 12s, un mensaje más tranquilizador
+      const extraTimer = setTimeout(() => {
+        updateMsg(typing, '⏳ Ya casi... esto solo pasa la primera vez del día.')
+      }, 12000)
+
       try {
-        const res = await fetch(`${BACKEND_URL}/chat`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId, mensaje: 'Hola' })
-        })
-        const data = await res.json()
+        const data = await callBackend('Hola')
+        clearTimeout(coldTimer)
+        clearTimeout(extraTimer)
+        serverReady = true
         typing.remove()
         addMsg(data.respuesta, 'bot')
       } catch {
+        clearTimeout(coldTimer)
+        clearTimeout(extraTimer)
         typing.remove()
         addMsg('¡Hola! Soy el asistente del Consultorio Dra. García. ¿En qué te puedo ayudar?', 'bot')
       }
